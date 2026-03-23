@@ -3287,6 +3287,12 @@ class GLTFParser {
 
 				}
 
+				if ( sampler.extras.colorSpace !== undefined ) {
+
+					texture.colorSpace = sampler.extras.colorSpace;
+
+				}
+
 			}
 
 			parser.associations.set( texture, { textures: textureIndex } );
