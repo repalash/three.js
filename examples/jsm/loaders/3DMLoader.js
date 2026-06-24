@@ -1289,6 +1289,18 @@ function Rhino3dmWorker() {
 					if ( id !== reflectionId ) break;
 
 					const renderTexture = content.findChild( 'texture' );
+					if ( ! renderTexture ) {
+
+						self.postMessage( { type: 'warning', id: taskID, data: {
+							message: 'THREE.3DMLoader: Render environment texture not found in file.',
+							type: 'missing resource'
+						}
+						} );
+
+						break;
+
+					}
+
 					const fileName = renderTexture.fileName;
 
 					for ( let j = 0; j < doc.embeddedFiles().count; j ++ ) {
