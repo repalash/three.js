@@ -2287,6 +2287,217 @@ class SVGLoader extends Loader {
 	}
 
 	/**
+	 * Extrudes a stroke geometry as returned by {@link SVGLoader#pointsToStroke} along the positive z-axis.
+	 *
+	 * The back face (at `z = 0`) and the front face (at `z = depth`) are the stroke triangles. The side walls are
+	 * generated along the outline of the stroke: on triangle edges that are not shared with another triangle and
+	 * do not lie inside the stroke. Where a stroke overlaps itself, the result contains overlapping faces, so it is
+	 * not necessarily manifold.
+	 *
+	 * Like {@link ExtrudeGeometry}, the geometry has two groups: `0` for the front and back faces, `1` for the side walls.
+	 * If the stroke has UV coordinates, the faces keep them and the side walls get `u` from the stroke and `v` along the depth.
+	 *
+	 * @param {BufferGeometry} geometry - The stroke geometry, in the XY plane.
+	 * @param {Object} [options] - The extrusion options.
+	 * @param {number} [options.depth=1] - The depth of the extrusion.
+	 * @param {number} [options.steps=1] - The number of subdivisions of the side walls along the depth.
+	 * @return {BufferGeometry} The extruded geometry.
+	 */
+	static extrudeStroke( geometry, options = {} ) {
+
+		const depth = options.depth !== undefined ? options.depth : 1;
+		const steps = options.steps !== undefined ? options.steps : 1;
+
+		const source = geometry.index !== null ? geometry.toNonIndexed() : geometry;
+		const position = source.getAttribute( 'position' );
+		const uv = source.getAttribute( 'uv' );
+
+		// Triangles in counter-clockwise order (seen from +z), degenerate triangles are skipped
+
+		const triangles = [];
+
+		for ( let i = 0; i < position.count; i += 3 ) {
+
+			const area = ( position.getX( i + 1 ) - position.getX( i ) ) * ( position.getY( i + 2 ) - position.getY( i ) ) -
+				( position.getX( i + 2 ) - position.getX( i ) ) * ( position.getY( i + 1 ) - position.getY( i ) );
+
+			if ( area > 0 ) triangles.push( i, i + 1, i + 2 );
+			else if ( area < 0 ) triangles.push( i, i + 2, i + 1 );
+
+		}
+
+		// Edges used by a single triangle are outline candidates
+
+		const edgeCount = new Map();
+
+		function edgeKey( a, b ) {
+
+			const ka = position.getX( a ) + ',' + position.getY( a );
+			const kb = position.getX( b ) + ',' + position.getY( b );
+
+			return ka < kb ? ka + '|' + kb : kb + '|' + ka;
+
+		}
+
+		for ( let i = 0; i < triangles.length; i += 3 ) {
+
+			for ( let j = 0; j < 3; j ++ ) {
+
+				const key = edgeKey( triangles[ i + j ], triangles[ i + ( j + 1 ) % 3 ] );
+				edgeCount.set( key, ( edgeCount.get( key ) || 0 ) + 1 );
+
+			}
+
+		}
+
+		// Grid of the triangles, to skip candidate edges that lie inside the stroke (e.g. the end edge under a round cap)
+
+		let minX = Infinity, minY = Infinity, maxX = - Infinity, maxY = - Infinity;
+
+		for ( let i = 0; i < position.count; i ++ ) {
+
+			minX = Math.min( minX, position.getX( i ) ); maxX = Math.max( maxX, position.getX( i ) );
+			minY = Math.min( minY, position.getY( i ) ); maxY = Math.max( maxY, position.getY( i ) );
+
+		}
+
+		const gridSize = Math.max( 1, Math.ceil( Math.sqrt( triangles.length / 3 ) ) );
+		const cellX = ( maxX - minX ) / gridSize || 1;
+		const cellY = ( maxY - minY ) / gridSize || 1;
+		const grid = new Map();
+
+		function cellIndex( v, min, cell ) {
+
+			return Math.min( gridSize - 1, Math.max( 0, Math.floor( ( v - min ) / cell ) ) );
+
+		}
+
+		for ( let i = 0; i < triangles.length; i += 3 ) {
+
+			const xs = [ position.getX( triangles[ i ] ), position.getX( triangles[ i + 1 ] ), position.getX( triangles[ i + 2 ] ) ];
+			const ys = [ position.getY( triangles[ i ] ), position.getY( triangles[ i + 1 ] ), position.getY( triangles[ i + 2 ] ) ];
+
+			for ( let gx = cellIndex( Math.min( ...xs ), minX, cellX ); gx <= cellIndex( Math.max( ...xs ), minX, cellX ); gx ++ ) {
+
+				for ( let gy = cellIndex( Math.min( ...ys ), minY, cellY ); gy <= cellIndex( Math.max( ...ys ), minY, cellY ); gy ++ ) {
+
+					const key = gx * gridSize + gy;
+					if ( ! grid.has( key ) ) grid.set( key, [] );
+					grid.get( key ).push( i );
+
+				}
+
+			}
+
+		}
+
+		function isInsideStroke( x, y, ownTriangle ) {
+
+			const cell = grid.get( cellIndex( x, minX, cellX ) * gridSize + cellIndex( y, minY, cellY ) );
+
+			if ( cell === undefined ) return false;
+
+			for ( const i of cell ) {
+
+				if ( i === ownTriangle ) continue;
+
+				const a = triangles[ i ], b = triangles[ i + 1 ], c = triangles[ i + 2 ];
+
+				// strictly inside the counter-clockwise triangle
+
+				if ( ( position.getX( b ) - position.getX( a ) ) * ( y - position.getY( a ) ) - ( position.getY( b ) - position.getY( a ) ) * ( x - position.getX( a ) ) <= 0 ) continue;
+				if ( ( position.getX( c ) - position.getX( b ) ) * ( y - position.getY( b ) ) - ( position.getY( c ) - position.getY( b ) ) * ( x - position.getX( b ) ) <= 0 ) continue;
+				if ( ( position.getX( a ) - position.getX( c ) ) * ( y - position.getY( c ) ) - ( position.getY( a ) - position.getY( c ) ) * ( x - position.getX( c ) ) <= 0 ) continue;
+
+				return true;
+
+			}
+
+			return false;
+
+		}
+
+		const vertices = [];
+		const uvs = [];
+
+		function addVertex( index, z, v ) {
+
+			vertices.push( position.getX( index ), position.getY( index ), z );
+
+			if ( uv !== undefined ) uvs.push( uv.getX( index ), v === undefined ? uv.getY( index ) : v );
+
+		}
+
+		// Back face, facing -z, and front face, facing +z
+
+		for ( let i = 0; i < triangles.length; i += 3 ) {
+
+			addVertex( triangles[ i ], 0 );
+			addVertex( triangles[ i + 2 ], 0 );
+			addVertex( triangles[ i + 1 ], 0 );
+
+		}
+
+		for ( let i = 0; i < triangles.length; i += 3 ) {
+
+			addVertex( triangles[ i ], depth );
+			addVertex( triangles[ i + 1 ], depth );
+			addVertex( triangles[ i + 2 ], depth );
+
+		}
+
+		const facesCount = vertices.length / 3;
+
+		// Side walls, facing outwards (the outline edge a -> b has the stroke on its left)
+
+		for ( let i = 0; i < triangles.length; i += 3 ) {
+
+			for ( let j = 0; j < 3; j ++ ) {
+
+				const a = triangles[ i + j ];
+				const b = triangles[ i + ( j + 1 ) % 3 ];
+
+				if ( edgeCount.get( edgeKey( a, b ) ) !== 1 ) continue;
+
+				const dx = position.getX( b ) - position.getX( a );
+				const dy = position.getY( b ) - position.getY( a );
+				const offset = 1e-4; // relative to the edge length
+
+				if ( isInsideStroke( ( position.getX( a ) + position.getX( b ) ) / 2 + dy * offset, ( position.getY( a ) + position.getY( b ) ) / 2 - dx * offset, i ) ) continue;
+
+				for ( let s = 0; s < steps; s ++ ) {
+
+					const z0 = depth * s / steps, z1 = depth * ( s + 1 ) / steps;
+					const v0 = s / steps, v1 = ( s + 1 ) / steps;
+
+					addVertex( a, z0, v0 );
+					addVertex( b, z0, v0 );
+					addVertex( b, z1, v1 );
+
+					addVertex( a, z0, v0 );
+					addVertex( b, z1, v1 );
+					addVertex( a, z1, v1 );
+
+				}
+
+			}
+
+		}
+
+		const extruded = new BufferGeometry();
+		extruded.setAttribute( 'position', new Float32BufferAttribute( vertices, 3 ) );
+		if ( uv !== undefined ) extruded.setAttribute( 'uv', new Float32BufferAttribute( uvs, 2 ) );
+		extruded.addGroup( 0, facesCount, 0 );
+		extruded.addGroup( facesCount, vertices.length / 3 - facesCount, 1 );
+		extruded.computeVertexNormals();
+
+		if ( source !== geometry ) source.dispose();
+
+		return extruded;
+
+	}
+
+	/**
 	 * Creates a stroke from an array of points.
 	 *
 	 * @param {Array<Vector2>} points - The points in 2D space. Minimum 2 points.

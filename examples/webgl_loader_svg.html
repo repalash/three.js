@@ -76,7 +76,9 @@
 					drawFillShapes: true,
 					drawStrokes: true,
 					fillShapesWireframe: false,
-					strokesWireframe: false
+					strokesWireframe: false,
+					extrude: false,
+					extrusionDepth: 10
 				};
 
 				loadSVG( guiData.currentURL );
@@ -142,6 +144,10 @@
 
 				gui.add( guiData, 'fillShapesWireframe' ).name( 'Wireframe fill shapes' ).onChange( update );
 
+				gui.add( guiData, 'extrude' ).name( 'Extrude' ).onChange( update );
+
+				gui.add( guiData, 'extrusionDepth', 1, 50 ).name( 'Extrusion depth' ).onChange( update );
+
 				function update() {
 
 					loadSVG( guiData.currentURL );
@@ -167,6 +173,12 @@
 				helper.rotation.x = Math.PI / 2;
 				scene.add( helper );
 
+				scene.add( new THREE.HemisphereLight( 0xffffff, 0x8d8d8d, 2 ) );
+
+				const directionalLight = new THREE.DirectionalLight( 0xffffff, 2 );
+				directionalLight.position.set( 1, 1, 2 );
+				scene.add( directionalLight );
+
 				//
 
 				const loader = new SVGLoader();
@@ -185,19 +197,22 @@
 
 						if ( guiData.drawFillShapes ) {
 
-							const material = SVGLoader.createFillMaterial( path );
+							let material = SVGLoader.createFillMaterial( path );
 
 							if ( material ) {
 
 								material.wireframe = guiData.fillShapesWireframe;
 
+								if ( guiData.extrude ) material = createExtrusionMaterial( material );
+
 								const shapes = path.toShapes();
 
 								for ( const shape of shapes ) {
 
-									const geometry = new THREE.ShapeGeometry( shape );
+									const geometry = guiData.extrude ? new THREE.ExtrudeGeometry( shape, { depth: guiData.extrusionDepth, bevelEnabled: false } ) : new THREE.ShapeGeometry( shape );
 									const mesh = new THREE.Mesh( geometry, material );
 									mesh.renderOrder = renderOrder ++;
+									if ( guiData.extrude ) mesh.position.z = mesh.renderOrder * 0.05; // later paths in front of earlier ones
 
 									group.add( mesh );
 
@@ -209,20 +224,25 @@
 
 						if ( guiData.drawStrokes ) {
 
-							const material = SVGLoader.createStrokeMaterial( path );
+							let material = SVGLoader.createStrokeMaterial( path );
 
 							if ( material ) {
 
 								material.wireframe = guiData.strokesWireframe;
 
+								if ( guiData.extrude ) material = createExtrusionMaterial( material );
+
 								for ( const subPath of path.subPaths ) {
 
-									const geometry = SVGLoader.pointsToStroke( subPath.getPoints(), path.userData.style );
+									let geometry = SVGLoader.pointsToStroke( subPath.getPoints(), path.userData.style );
 
 									if ( geometry ) {
 
+										if ( guiData.extrude ) geometry = SVGLoader.extrudeStroke( geometry, { depth: guiData.extrusionDepth } );
+
 										const mesh = new THREE.Mesh( geometry, material );
 										mesh.renderOrder = renderOrder ++;
+										if ( guiData.extrude ) mesh.position.z = mesh.renderOrder * 0.05;
 
 										group.add( mesh );
 
@@ -241,6 +261,25 @@
 					render();
 
 				} );
+
+			}
+
+			function createExtrusionMaterial( material ) {
+
+				// lit, so that the sides of the extruded shapes are visible
+
+				const extrusionMaterial = new THREE.MeshLambertMaterial( {
+					color: material.color,
+					map: material.map,
+					opacity: material.opacity,
+					transparent: material.opacity < 1,
+					side: THREE.DoubleSide,
+					wireframe: material.wireframe
+				} );
+
+				material.dispose();
+
+				return extrusionMaterial;
 
 			}
 
