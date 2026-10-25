@@ -2171,9 +2171,9 @@ class GLTFWriter {
 
 		if ( ! json.meshes ) json.meshes = [];
 
-		await this._invokeAllAsync( function ( ext ) {
+		await this._invokeAllAsync( async function ( ext ) {
 
-			ext.writeMesh && ext.writeMesh( mesh, meshDef );
+			ext.writeMesh && await ext.writeMesh( mesh, meshDef );
 
 		} );
 
@@ -2556,9 +2556,9 @@ class GLTFWriter {
 
 		}
 
-		await this._invokeAllAsync( function ( ext ) {
+		await this._invokeAllAsync( async function ( ext ) {
 
-			ext.writeNode && ext.writeNode( object, nodeDef );
+			ext.writeNode && await ext.writeNode( object, nodeDef );
 
 		} );
 
@@ -2676,9 +2676,9 @@ class GLTFWriter {
 
 		containerDef.children = containerChildren;
 
-		await this._invokeAllAsync( function ( ext ) {
+		await this._invokeAllAsync( async function ( ext ) {
 
-			ext.writeNode && ext.writeNode( object, containerDef );
+			ext.writeNode && await ext.writeNode( object, containerDef );
 
 		} );
 
@@ -2760,9 +2760,9 @@ class GLTFWriter {
 
 		input = input instanceof Array ? input : [ input ];
 
-		await this._invokeAllAsync( function ( ext ) {
+		await this._invokeAllAsync( async function ( ext ) {
 
-			ext.beforeParse && ext.beforeParse( input );
+			ext.beforeParse && await ext.beforeParse( input );
 
 		} );
 
@@ -2824,9 +2824,9 @@ class GLTFWriter {
 
 		}
 
-		await this._invokeAllAsync( function ( ext ) {
+		await this._invokeAllAsync( async function ( ext ) {
 
-			ext.afterParse && ext.afterParse( input );
+			ext.afterParse && await ext.afterParse( input );
 
 		} );
 
